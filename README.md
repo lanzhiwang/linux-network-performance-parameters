@@ -17,11 +17,11 @@
 
 # Introduction
 
-Sometimes people are looking for [sysctl](https://www.kernel.org/doc/Documentation/networking/ip-sysctl.txt) cargo cult values that bring high throughput and low latency with no trade-off and that works on every occasion. That's not realistic, although we can say that the **newer kernel versions are very well tuned by default**. In fact, you might [hurt performance if you mess with the defaults](https://medium.com/@duhroach/the-bandwidth-delay-problem-c6a2a578b211).
+Sometimes people are looking for [sysctl](https://www.kernel.org/doc/Documentation/networking/ip-sysctl.txt) cargo cult values that bring high throughput and low latency with no trade-off and that works on every occasion. That's not realistic, although we can say that the **newer kernel versions are very well tuned by default**. In fact, you might [hurt performance if you mess with the defaults](https://medium.com/@duhroach/the-bandwidth-delay-problem-c6a2a578b211).  有时人们正在寻找具有高吞吐量和低延迟的sysctl货物崇拜价值，无需权衡，并且适用于所有场合。 这是不现实的，虽然我们可以说默认情况下新的内核版本调整得很好。 事实上，如果你搞乱了默认设置，你可能会损害性能。
 
-This brief tutorial shows **where some of the most used and quoted sysctl/network parameters are located into the Linux network flow**, it was heavily inspired by [the illustrated guide to Linux networking stack](https://blog.packagecloud.io/eng/2016/10/11/monitoring-tuning-linux-networking-stack-receiving-data-illustrated/) and many of [Marek Majkowski's posts](https://blog.cloudflare.com/how-to-achieve-low-latency/). 
+This brief tutorial shows **where some of the most used and quoted sysctl/network parameters are located into the Linux network flow**, it was heavily inspired by [the illustrated guide to Linux networking stack](https://blog.packagecloud.io/eng/2016/10/11/monitoring-tuning-linux-networking-stack-receiving-data-illustrated/) and many of [Marek Majkowski's posts](https://blog.cloudflare.com/how-to-achieve-low-latency/).   这个简短的教程显示了一些最常用和引用的sysctl / network参数位于Linux网络流程中的位置，它受到了Linux网络堆栈和许多Marek Majkowski帖子的图解指南的启发。
 
-> #### Feel free to send corrections and suggestions! :)
+> #### Feel free to send corrections and suggestions! :)  随意发送更正和建议！
 
 # Linux network queues overview
 
@@ -30,17 +30,17 @@ This brief tutorial shows **where some of the most used and quoted sysctl/networ
 # Fitting the sysctl variables into the Linux network flow
 
 ## Ingress - they're coming
-1. Packets arrive at the NIC
-1. NIC will verify `MAC` (if not on promiscuous mode) and `FCS` and decide to drop or to continue
-1. NIC will [DMA packets at RAM](https://en.wikipedia.org/wiki/Direct_memory_access), in a region previously prepared (mapped) by the driver
-1. NIC will enqueue references to the packets at receive [ring buffer](https://en.wikipedia.org/wiki/Circular_buffer) queue `rx` until `rx-usecs` timeout or `rx-frames`
+1. Packets arrive at the NIC  数据包到达NIC
+1. NIC will verify `MAC` (if not on promiscuous mode) and `FCS` and decide to drop or to continue  NIC将验证MAC（如果不是混杂模式）和FCS并决定丢弃或继续
+1. NIC will [DMA packets at RAM](https://en.wikipedia.org/wiki/Direct_memory_access), in a region previously prepared (mapped) by the driver  NIC将在先前由驱动程序准备（映射）的区域中的RAM处DMA数据包
+1. NIC will enqueue references to the packets at receive [ring buffer](https://en.wikipedia.org/wiki/Circular_buffer) queue `rx` until `rx-usecs` timeout or `rx-frames`  NIC将在接收环缓冲区队列rx中对数据包的引用进行排队，直到rx-usecs timeout或rx-frames
 1. NIC will raise a `hard IRQ`
 1. CPU will run the `IRQ handler` that runs the driver's code
-1. Driver will `schedule a NAPI`, clear the `hard IRQ` and return
+1. Driver will `schedule a NAPI`, clear the `hard IRQ` and return  驱动程序将安排NAPI，清除硬IRQ并返回
 1. Driver raise a `soft IRQ (NET_RX_SOFTIRQ)`
-1. NAPI will poll data from the receive ring buffer until `netdev_budget_usecs` timeout or `netdev_budget` and `dev_weight` packets
+1. NAPI will poll data from the receive ring buffer until `netdev_budget_usecs` timeout or `netdev_budget` and `dev_weight` packets  NAPI将从接收环缓冲区轮询数据，直到netdev_budget_usecs超时或netdev_budget和dev_weight数据包
 1. Linux will also allocate memory to `sk_buff`
-1. Linux fills the metadata: protocol, interface, setmacheader, removes ethernet
+1. Linux fills the metadata: protocol, interface, setmacheader, removes ethernet  Linux填充元数据：协议，接口，setmacheader，删除以太网
 1. Linux will pass the skb to the kernel stack (`netif_receive_skb`)
 1. It will set the network header, clone `skb` to taps (i.e. tcpdump) and pass it to tc ingress
 1. Packets are handled to a qdisc sized `netdev_max_backlog` with its algorithm defined by `default_qdisc`
@@ -81,23 +81,23 @@ This brief tutorial shows **where some of the most used and quoted sysctl/networ
 # What, Why and How - network and sysctl parameters
 
 ## Ring Buffer - rx,tx
-* **What** - the driver receive/send queue a single or multiple queues with a fixed size, usually implemented as FIFO, it is located at RAM
-* **Why** - buffer to smoothly accept bursts of connections without dropping them, you might need to increase these queues when you see drops or overrun, aka there are more packets coming than the kernel is able to consume them, the side effect might be increased latency.
+* **What** - the driver receive/send queue a single or multiple queues with a fixed size, usually implemented as FIFO, it is located at RAM  驱动程序接收/发送具有固定大小的单个或多个队列，通常实现为FIFO，它位于RAM
+* **Why** - buffer to smoothly accept bursts of connections without dropping them, you might need to increase these queues when you see drops or overrun, aka there are more packets coming than the kernel is able to consume them, the side effect might be increased latency.  缓冲区可以平滑地接受连接突发而不丢弃它们，当你看到丢弃或溢出时，你可能需要增加这些队列，也就是说，有更多的数据包来自内核能够消耗它们，副作用可能是延迟增加。
 * **How:**
   * **Check command:** `ethtool -g ethX`
   * **Change command:** `ethtool -G ethX rx value tx value`
   * **How to monitor:** `ethtool -S ethX | grep -e "err" -e "drop" -e "over" -e "miss" -e "timeout" -e "reset" -e "restar" -e "collis" -e "over" | grep -v "\: 0"`
- 
+
 ## Interrupt Coalescence (IC) - rx-usecs, tx-usecs, rx-frames, tx-frames (hardware IRQ)
-* **What** - number of microseconds/frames to wait before raising a hardIRQ, from the NIC perspective it'll DMA data packets until this timeout/number of frames
-* **Why** - reduce CPUs usage, hard IRQ, might increase throughput at cost of latency.
+* **What** - number of microseconds/frames to wait before raising a hardIRQ, from the NIC perspective it'll DMA data packets until this timeout/number of frames  在引发hardIRQ之前要等待的微秒数/帧数，从NIC的角度看它将DMA数据包直到这个超时/帧数
+* **Why** - reduce CPUs usage, hard IRQ, might increase throughput at cost of latency.  减少CPU使用率，硬IRQ，可能会以延迟为代价增加吞吐量。
 * **How:**
   * **Check command:** `ethtool -c ethX`
   * **Change command:** `ethtool -C ethX rx-usecs value tx-usecs value`
   * **How to monitor:** `cat /proc/interrupts` 
   
 ## Interrupt Coalescing (soft IRQ) and Ingress QDisc
-* **What** - maximum number of microseconds in one [NAPI](https://en.wikipedia.org/wiki/New_API) polling cycle. Polling will exit when either `netdev_budget_usecs` have elapsed during the poll cycle or the number of packets processed reaches  `netdev_budget`.
+* **What** - maximum number of microseconds in one [NAPI](https://en.wikipedia.org/wiki/New_API) polling cycle. Polling will exit when either `netdev_budget_usecs` have elapsed during the poll cycle or the number of packets processed reaches  `netdev_budget`.  一个NAPI轮询周期中的最大微秒数。 在轮询周期中经过netdev_budget_usecs或处理的数据包数达到netdev_budget时，轮询将退出。
 * **Why** - instead of reacting to tons of softIRQ, the driver keeps polling data; keep an eye on `dropped` (# of packets that were dropped because `netdev_max_backlog` was exceeded) and `squeezed` (# of times ksoftirq ran out of `netdev_budget` or time slice with work remaining).
 * **How:**
   * **Check command:** `sysctl net.core.netdev_budget_usecs`
